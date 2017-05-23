@@ -1,0 +1,107 @@
+\documentclass[12pt, letterpaper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[]{algorithm2e}
+\usepackage{xcolor}
+
+\newcommand\mycommfont[1]{\footnotesize\ttfamily\textcolor{blue}{#1}}
+\SetCommentSty{mycommfont}
+
+\begin{document}
+\title{Breakdown Detection in Dialogue System}
+\maketitle
+\section{Our Dialogue System}
+To respond a user query $u$, our dialogue system finds a QA pair $qa=(q,a)$, where $q$ is a question and $a$ is the answer, in the knowledge base that can answer $u$.
+Among QA pairs in the knowledge base, the system takes $qa'$ whose $q'$ has the highest similarity with $u$ as the likely response.
+It will return $a'$ in the $qa'$ as its output only if the similarity between $q'$ and $u$ is higher than a predefined threshold.
+
+\section{Breakdown}
+Given a user query $u$, the objective of this module is to first detect whether the response of our dialog system is correct (labeled as ``SUCCESS'') or not.
+When the response is considered as incorrect, this module attempts to find the reason.
+For now, we hypothesize that there are two reasons why a breakdown may happen:
+\begin{itemize}
+  \item \textit{No knowledge.} 
+        Our knowledge base does not have any QA pair that is suitable to answer $u$.
+  \item \textit{Dialogue system does not return correct answer that EXISTS in the knowledge base.} 
+        Even though our knowledge base contains a QA pair $qa'$ that can correctly answer $u$, our dialogue system, which depends on ElasticSearch, may not consider $qa'$ to respond $u$.
+        This might happen if there is another QA pair that has a better match with $u$ (according to word overlap similarity measures), but in fact does not answer $u$. 
+        In another case, $qa'$ may appear as the best pair candidate, but it has a similarity score under a certain threshold. This causes our dialogue system uncertain if $qa'$ really matches with $u$.
+\end{itemize}
+
+For the latter category, we further hypothesize that there are two factors why the correct QA pair $qa'$ is not returned by our dialogue system.
+\begin{itemize}
+  \item \textit{$u$ is a paraphrase of $q'$.}
+  \item \textit{some terms in $u$ has synonym relations with terms in $q'$.}
+\end{itemize}
+These factors cause a simple word matching strategy fails to detect whether two statements $u$ and $q'$ are semantically similar.
+Hence, the failure of our dialogue system to return $a'$ as output.
+
+\section{Problem Definition}
+To detect the correctness of responses and the reasons of breakdowns, we formalize this task as follows:
+\begin{itemize}
+  \item SUCCESS: $semantic(ES_1)=semantic(u)$ and $score(ES_1) > threshold$, where $ES_1$ is the QA pair with the highest similarity.
+  \item NEED KNOWLEDGE: $\forall qa_i \in KB [semantic(q_i) \ne semantic(u)]$
+  \item PARAPHRASE: $\exists qa_i \in KB [semantic(q_i) = semantic(u)$ AND $u = paraphrase(q_i)]$
+  \item SYNONYM: $\exists qa_i \in KB [semantic(q_i) = semantic(u)$ AND $u = synonym(q_i)]$
+\end{itemize}
+
+\section{Implementation}
+
+
+\begin{algorithm}[H]
+	\KwData{User Query $u$}
+	\KwResult{Output status of dialogue system (SUCCESS or reason of BREAKDOWN)}
+	$threshold$ = 0.6\;
+	$ES$ = SearchES($u$)\;
+
+	\BlankLine
+	\BlankLine
+
+	\eIf{$semantic(ES_1) == semantic(u)$ and $score(ES_1) > threshold$}{
+		\textcolor{red}{return "SUCCESS"\;}
+	}{
+		\tcc{finding the reason of breakdown}
+		$paraphrase=-1.0$\;
+		$synonym=-1.0$ \;
+
+  	\BlankLine
+		\BlankLine
+
+		\For{$ES_i \in ES$}{
+      \If{$semantic(ES_i) \ne semantic(u)$}{
+        continue\;
+      }
+
+			\tcc{Assume that $paraph\_score, syn\_score \in [0.0, 1.0]$}
+			$paraph\_score  = paraphrase\_model(ES_i, u)$\;
+			$syn\_score		 = synonym\_mode(ES_i, u)$\;
+
+      $paraphrase = max(paraphrase, paraph\_score)$	\;
+      $synonym = max(synonym, syn\_score)$\;
+		}
+
+		\BlankLine
+
+    \tcc{Returning the reason of breakdown}
+		$paraphrase\_thresh = 0.5$\;
+		$synonym\_thresh		 = 0.5$\;
+	
+		\If{$paraphrase < paraphrase\_thresh$ and $synonym < synonym\_thresh$}{
+      \textcolor{red}{return "NEED KNOWLEDGE"\;}
+		}
+    \BlankLine
+		\BlankLine
+
+    $min\_margin=0.2$\;
+    \If{$|paraphrase - synonym| < min\_margin$}{
+      \textcolor{red}{return "NEED PARAPHRASE AND SYNONYM"\;}
+    }
+
+    \If{$paraphrase > synonym$}{
+      \textcolor{red}{return "NEED PARAPHRASE"\;}
+    }
+
+    \textcolor{red}{return "NEED SYNONYM"\;}
+	}
+ \caption{Overview of Breakdown detection}
+\end{algorithm}
+\end{document}
